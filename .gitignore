@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.py[cod]
+.idea/
+catboost_info/
+.DS_Store
+Thumbs.db
