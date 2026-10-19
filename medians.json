@@ -1,0 +1,17 @@
+{
+    "male": 0.0,
+    "age": 49.0,
+    "education": 2.0,
+    "currentSmoker": 0.0,
+    "cigsPerDay": 0.0,
+    "BPMeds": 0.0,
+    "prevalentStroke": 0.0,
+    "prevalentHyp": 0.0,
+    "diabetes": 0.0,
+    "totChol": 234.0,
+    "sysBP": 128.0,
+    "diaBP": 82.0,
+    "BMI": 25.4,
+    "heartRate": 75.0,
+    "glucose": 78.0
+}
