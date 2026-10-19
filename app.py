@@ -8,11 +8,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from sklearn.metrics import (accuracy_score, classification_report,
-                             confusion_matrix, roc_auc_score, roc_curve)
+                             confusion_matrix, roc_auc_score)
 
 try:
     from catboost import CatBoostClassifier
-
     CATBOOST_AVAILABLE = True
 except ImportError:
     CATBOOST_AVAILABLE = False
@@ -69,7 +68,6 @@ TEST_EXAMPLE = {
     "totChol": 240, "sysBP": 140, "diaBP": 90, "BMI": 28.5, "heartRate": 75, "glucose": 85
 }
 
-
 # ---------- ЗАГРУЗКА ----------
 @st.cache_resource(show_spinner=False)
 def load_model(path: str):
@@ -81,7 +79,6 @@ def load_model(path: str):
     model.load_model(path)
     return model
 
-
 @st.cache_data(show_spinner=False)
 def load_medians(path: str):
     if os.path.exists(path):
@@ -89,91 +86,99 @@ def load_medians(path: str):
             return json.load(f)
     return {}
 
-
 # ---------- ИНИЦИАЛИЗАЦИЯ И УТИЛИТЫ ----------
 def init_state():
     if "inputs" not in st.session_state:
-        # Берем медианы как дефолтные значения
         medians = load_medians(MEDIANS_PATH)
         st.session_state.inputs = {feat: medians.get(feat, TEST_EXAMPLE.get(feat, 0)) for feat in FEATURES}
     if "history" not in st.session_state:
         st.session_state.history = []
-
+    if "form_version" not in st.session_state:
+        st.session_state.form_version = 0  # Для сброса полей ввода
+    if "restored_csv" not in st.session_state:
+        st.session_state.restored_csv = None # Для истории CSV
+    if "restored_target" not in st.session_state:
+        st.session_state.restored_target = None
 
 def reset_form():
     medians = load_medians(MEDIANS_PATH)
     st.session_state.inputs = {feat: medians.get(feat, TEST_EXAMPLE.get(feat, 0)) for feat in FEATURES}
-
+    st.session_state.form_version += 1
 
 def load_test_example():
     st.session_state.inputs = TEST_EXAMPLE.copy()
+    st.session_state.form_version += 1
 
-
-def restore_from_history(idx):
-    # Восстанавливаем данные из истории
-    st.session_state.inputs = st.session_state.history[idx]["inputs"].copy()
-    st.toast(f"Данные пациента '{st.session_state.history[idx]['name']}' восстановлены!")
-
+def restore_from_history(item):
+    if item["type"] == "manual":
+        st.session_state.inputs = item["inputs"].copy()
+        st.session_state.form_version += 1
+        st.session_state.radio_mode = "Ввести вручную"
+        st.toast(f"Данные пациента '{item['name']}' восстановлены!")
+        st.rerun()
+    elif item["type"] == "csv":
+        st.session_state.restored_csv = item["df"]
+        st.session_state.restored_target = item.get("target")
+        st.session_state.radio_mode = "Загрузить CSV-файл"
+        st.toast(f"Файл '{item['name']}' загружен в память!")
+        st.rerun()
 
 # ---------- РУЧНОЙ ВВОД ----------
 def manual_input_form():
     st.subheader("Введите клинические показатели")
-
-    patient_name = st.text_input("Имя пациента (для истории)", value="Пациент А", key="input_name")
+    ver = st.session_state.form_version # Используем версию для ключей
+    
+    patient_name = st.text_input("Имя пациента (для истории)", value="Пациент А", key=f"input_name_{ver}")
 
     vals = st.session_state.inputs
     cols = st.columns(2)
 
     with cols[0]:
-        vals["male"] = st.selectbox(FEATURE_LABELS["male"], [0, 1], index=[0, 1].index(int(vals["male"])),
-                                    key="in_male")
-        vals["age"] = st.number_input(FEATURE_LABELS["age"], 20, 100, int(vals["age"]), key="in_age")
-        vals["education"] = st.number_input(FEATURE_LABELS["education"], 1, 4, int(vals["education"]), step=1,
-                                            key="in_edu")
-        vals["currentSmoker"] = st.selectbox(FEATURE_LABELS["currentSmoker"], [0, 1],
-                                             index=[0, 1].index(int(vals["currentSmoker"])), key="in_smoker")
-        vals["cigsPerDay"] = st.number_input(FEATURE_LABELS["cigsPerDay"], 0, 60, int(vals["cigsPerDay"]),
-                                             key="in_cigs")
-        vals["BPMeds"] = st.selectbox(FEATURE_LABELS["BPMeds"], [0, 1], index=[0, 1].index(int(vals["BPMeds"])),
-                                      key="in_bpmeds")
-        vals["prevalentStroke"] = st.selectbox(FEATURE_LABELS["prevalentStroke"], [0, 1],
-                                               index=[0, 1].index(int(vals["prevalentStroke"])), key="in_stroke")
-        vals["prevalentHyp"] = st.selectbox(FEATURE_LABELS["prevalentHyp"], [0, 1],
-                                            index=[0, 1].index(int(vals["prevalentHyp"])), key="in_hyp")
+        vals["male"] = st.selectbox(FEATURE_LABELS["male"], [0, 1], index=[0, 1].index(int(vals["male"])), key=f"in_male_{ver}")
+        vals["age"] = st.number_input(FEATURE_LABELS["age"], 20, 100, int(vals["age"]), key=f"in_age_{ver}")
+        vals["education"] = st.number_input(FEATURE_LABELS["education"], 1, 4, int(vals["education"]), step=1, key=f"in_edu_{ver}")
+        vals["currentSmoker"] = st.selectbox(FEATURE_LABELS["currentSmoker"], [0, 1], index=[0, 1].index(int(vals["currentSmoker"])), key=f"in_smoker_{ver}")
+        vals["cigsPerDay"] = st.number_input(FEATURE_LABELS["cigsPerDay"], 0, 60, int(vals["cigsPerDay"]), key=f"in_cigs_{ver}")
+        vals["BPMeds"] = st.selectbox(FEATURE_LABELS["BPMeds"], [0, 1], index=[0, 1].index(int(vals["BPMeds"])), key=f"in_bpmeds_{ver}")
+        vals["prevalentStroke"] = st.selectbox(FEATURE_LABELS["prevalentStroke"], [0, 1], index=[0, 1].index(int(vals["prevalentStroke"])), key=f"in_stroke_{ver}")
+        vals["prevalentHyp"] = st.selectbox(FEATURE_LABELS["prevalentHyp"], [0, 1], index=[0, 1].index(int(vals["prevalentHyp"])), key=f"in_hyp_{ver}")
 
     with cols[1]:
-        vals["diabetes"] = st.selectbox(FEATURE_LABELS["diabetes"], [0, 1], index=[0, 1].index(int(vals["diabetes"])),
-                                        key="in_diab")
-        vals["totChol"] = st.number_input(FEATURE_LABELS["totChol"], 100, 600, int(vals["totChol"]), key="in_chol")
-        vals["sysBP"] = st.number_input(FEATURE_LABELS["sysBP"], 80, 220, int(vals["sysBP"]), key="in_sysbp")
-        vals["diaBP"] = st.number_input(FEATURE_LABELS["diaBP"], 40, 140, int(vals["diaBP"]), key="in_diabp")
-        vals["BMI"] = st.number_input(FEATURE_LABELS["BMI"], 15.0, 50.0, float(vals["BMI"]), step=0.1, key="in_bmi")
-        vals["heartRate"] = st.number_input(FEATURE_LABELS["heartRate"], 40, 200, int(vals["heartRate"]), key="in_hr")
-        vals["glucose"] = st.number_input(FEATURE_LABELS["glucose"], 40, 400, int(vals["glucose"]), key="in_gluc")
+        vals["diabetes"] = st.selectbox(FEATURE_LABELS["diabetes"], [0, 1], index=[0, 1].index(int(vals["diabetes"])), key=f"in_diab_{ver}")
+        vals["totChol"] = st.number_input(FEATURE_LABELS["totChol"], 100, 600, int(vals["totChol"]), key=f"in_chol_{ver}")
+        vals["sysBP"] = st.number_input(FEATURE_LABELS["sysBP"], 80, 220, int(vals["sysBP"]), key=f"in_sysbp_{ver}")
+        vals["diaBP"] = st.number_input(FEATURE_LABELS["diaBP"], 40, 140, int(vals["diaBP"]), key=f"in_diabp_{ver}")
+        vals["BMI"] = st.number_input(FEATURE_LABELS["BMI"], 15.0, 50.0, float(vals["BMI"]), step=0.1, key=f"in_bmi_{ver}")
+        vals["heartRate"] = st.number_input(FEATURE_LABELS["heartRate"], 40, 200, int(vals["heartRate"]), key=f"in_hr_{ver}")
+        vals["glucose"] = st.number_input(FEATURE_LABELS["glucose"], 40, 400, int(vals["glucose"]), key=f"in_gluc_{ver}")
 
     st.session_state.inputs = vals
     return pd.DataFrame([vals], columns=FEATURES), patient_name
 
-
 # ---------- CSV И ПРЕДОБРАБОТКА ----------
 def csv_input_block():
     st.subheader("Загрузите CSV-файл")
-    st.caption("Один пациент — одна строка. Колонки должны совпадать с признаками модели (15 признаков).")
+    
+    # Если файл восстановлен из истории
+    if st.session_state.restored_csv is not None:
+        st.success("Файл успешно восстановлен из истории! Нажмите 'Запустить анализ'.")
+        if st.button("❌ Отменить восстановление и загрузить новый файл"):
+            st.session_state.restored_csv = None
+            st.session_state.restored_target = None
+            st.rerun()
+        return st.session_state.restored_csv, ["Восстановленный файл"], st.session_state.restored_target, st.session_state.restored_target is not None
 
+    # Обычная загрузка
     template = pd.DataFrame([TEST_EXAMPLE], columns=FEATURES)
     st.download_button(
-        "📥 Скачать шаблон CSV (без таргета)",
-        data=template.to_csv(index=False).encode("utf-8"),
+        "📥 Скачать шаблон CSV (без таргета)", 
+        data=template.to_csv(index=False).encode("utf-8"), 
         file_name="framingham_template.csv", mime="text/csv",
-        help="Скачайте пример файла для проверки модели без таргета."
     )
 
-    check_model = st.checkbox("Проверить работу модели (загрузите CSV с колонкой TenYearCHD)",
-                              help="Модель предскажет риски и сравнив с реальными ответами, покажет метрики точности.")
-
+    check_model = st.checkbox("Проверить работу модели (загрузите CSV с колонкой TenYearCHD)")
     if check_model:
-        st.info(
-            "⚠️ **Внимание!** Для проверки метрик ваш CSV-файл ОБЯЗАТЕЛЬНО должен содержать колонку `TenYearCHD` с правильными ответами (0 или 1).")
+        st.info("⚠️ **Внимание!** Для проверки метрик ваш CSV-файл ОБЯЗАТЕЛЬНО должен содержать колонку `TenYearCHD` с правильными ответами (0 или 1).")
 
     uploaded = st.file_uploader("CSV с клиническими данными", type=["csv"])
     if uploaded is None:
@@ -185,7 +190,6 @@ def csv_input_block():
         st.error("Не удалось прочитать файл. Проверьте, что это корректный CSV.")
         return None, None, None, False
 
-    # Обработка имени файла
     name_col = next((col for col in df.columns if col.lower() in ["name", "имя"]), None)
     if name_col:
         patient_names = df[name_col].astype(str).tolist()
@@ -193,13 +197,11 @@ def csv_input_block():
     else:
         patient_names = [f"Файл: {uploaded.name}"] * len(df)
 
-    # 1. УДАЛЯЕМ ДУБЛИКАТЫ
     rows_before = len(df)
     df = df.drop_duplicates()
     if len(df) < rows_before:
         st.warning(f"Удалено дубликатов: {rows_before - len(df)}")
 
-    # Проверка таргета
     target_data = None
     if check_model:
         if "TenYearCHD" not in df.columns:
@@ -215,7 +217,6 @@ def csv_input_block():
 
     df = df[FEATURES]
 
-    # 2. ОБРАБОТКА ПРОПУСКОВ (NaN)
     nan_count = df.isna().sum().sum()
     if nan_count > 0:
         st.warning(f"Обнаружены пропуски: {nan_count} ячеек.")
@@ -224,17 +225,18 @@ def csv_input_block():
             ["Заполнить медианами из файла medians.json", "Удалить строки с пропусками"],
             key="nan_strategy"
         )
-
+        
         if strategy == "Заполнить медианами из файла medians.json":
             medians = load_medians(MEDIANS_PATH)
             df = df.fillna(medians)
         else:
             idx_before = df.index
             df = df.dropna().reset_index(drop=True)
+            if target_data is not None:
+                target_data = target_data.reset_index(drop=True)
+                target_data = target_data[~target_data.index.isin(idx_before) == False] # Сохраняем только оставшиеся
             if len(df) < len(idx_before):
                 st.info(f"Удалено строк с пропусками: {len(idx_before) - len(df)}")
-                if target_data is not None:
-                    target_data = target_data.loc[df.index]  # Синхронизируем таргет
 
     if df.empty:
         st.error("После очистки не осталось данных.")
@@ -245,9 +247,8 @@ def csv_input_block():
 
     return df, patient_names[:len(df)], target_data, check_model
 
-
 # ---------- ПРЕДСКАЗАНИЕ И МЕТРИКИ ----------
-def predict_and_render(model, df, names, target_data, check_model):
+def predict_and_render(model, df, names, target_data, check_model, mode):
     try:
         probs = model.predict_proba(df)
         preds = model.predict(df).astype(int).ravel()
@@ -257,94 +258,91 @@ def predict_and_render(model, df, names, target_data, check_model):
 
     st.subheader("Результаты анализа")
 
-    # Если режим Проверки модели (с таргетом)
+    # Метрики (только для CSV с проверкой)
     if check_model and target_data is not None:
-        st.info(
-            "На вход подаются данные с X, y. Проверка предсказаний полезна, если нам нужно понять, устарела ли модель, стоит ли её переобучать.")
-
-        col1, col2 = st.columns(2)
+        st.info("На вход подаются данные с X, y. Проверка предсказаний полезна, если нам нужно понять, устарела ли модель, стоит ли её переобучать.")
+        
+        col1, col2 = st.columns([1, 1])
         with col1:
-            st.text("Classification Report:")
             report = classification_report(target_data, preds, zero_division=0)
+            st.text("Classification Report:")
             st.code(report, language="text")
         with col2:
             st.metric("ROC-AUC", f"{roc_auc_score(target_data, probs[:, 1]):.4f}")
-
-            # Матрица ошибок
+            
+            # Красивая матрица ошибок (Heatmap)
             cm = confusion_matrix(target_data, preds)
-            tn, fp, fn, tp = cm.ravel() if cm.size == 4 else (0, 0, 0, 0)
-            st.write("**Матрица ошибок (Confusion Matrix):**")
-            st.write(f"✅ True Positive (TP): **{tp}** | ❌ False Positive (FP): **{fp}**")
-            st.write(f"❌ False Negative (FN): **{fn}** | ✅ True Negative (TN): **{tn}**")
+            fig_cm = px.imshow(cm, text_auto=True, aspect="auto",
+                               labels=dict(x="Predicted label", y="True label"),
+                               x=["Negative (0)", "Positive (1)"], 
+                               y=["Negative (0)", "Positive (1)"],
+                               color_continuous_scale="Blues",
+                               title="Матрица ошибок (Confusion Matrix)")
+            fig_cm.update_layout(coloraxis_showscale=False)
+            st.plotly_chart(fig_cm, use_container_width=True)
 
     # Сохранение в историю
-    history_record = {
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "name": names[0] if isinstance(names, list) else names,
-        "inputs": df.iloc[0].to_dict() if len(df) == 1 else {},
-        "verdict": "Анализ завершен"
-    }
+    if mode == "Ввести вручную":
+        history_record = {
+            "type": "manual",
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "name": names[0] if isinstance(names, list) else names,
+            "inputs": df.iloc[0].to_dict(),
+            "verdict": "Обработан"
+        }
+        st.session_state.history.append(history_record)
+    else:
+        history_record = {
+            "type": "csv",
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "name": names[0] if isinstance(names, list) else names,
+            "df": df, # Сохраняем сам датафрейм для истории
+            "target": target_data,
+            "verdict": f"CSV ({len(df)} строк)"
+        }
+        st.session_state.history.append(history_record)
 
+    # Вывод результата для одного пациента
     if len(df) == 1:
         p_disease = float(probs[0][1])
-
-        # Логика вердикта
+        
         if p_disease < 0.4:
-            verdict = "✅ Риск ИБС не обнаружен"
-            history_record["verdict"] = verdict
-            st.success(f"### {verdict}")
+            st.success(f"### ✅ Риск ИБС не обнаружен")
         elif 0.4 <= p_disease <= 0.6:
-            verdict = "⚠️ Серая зона: Есть риски, но небольшие. Рекомендуется ежегодное посещение врача."
-            history_record["verdict"] = "Серая зона"
-            st.warning(f"### {verdict}")
+            st.warning(f"### ⚠️ Серая зона: Есть риски, но небольшие. Рекомендуется ежегодное посещение врача.")
         else:
-            verdict = "🚨 Повышенный риск ИБС в ближайшие 10 лет"
-            history_record["verdict"] = "Высокий риск"
-            st.error(f"### {verdict}")
-
+            st.error(f"### 🚨 Повышенный риск ИБС в ближайшие 10 лет")
+            
         st.metric("Вероятность наличия ИБС", f"{p_disease * 100:.1f} %")
 
-        # Сохраняем в историю и выводим Plotly
-        if names[0] not in ["Файл: ", ""]:
-            st.session_state.history.append(history_record)
-
-        # Plotly Вероятности
         proba_df = pd.DataFrame({"Класс": ["Нет ИБС", "ИБС"], "Вероятность": [probs[0][0], probs[0][1]]})
-        fig = px.bar(proba_df, x="Класс", y="Вероятность", color="Класс",
+        fig = px.bar(proba_df, x="Класс", y="Вероятность", color="Класс", 
                      title="Вероятность классов", color_discrete_sequence=["#2ecc71", "#e74c3c"])
         st.plotly_chart(fig, use_container_width=True)
 
+    # Вывод результата для пакетного CSV
     else:
-        # Пакетный CSV
         results = df.copy()
         results.insert(0, "Имя", names)
         results["Вероятность ИБС"] = probs[:, 1].round(3)
         results["Предсказание"] = preds
-
-        # Count Plot
+        
         count_df = results["Предсказание"].value_counts().reset_index()
         count_df.columns = ["Класс", "Количество"]
         count_df["Класс"] = count_df["Класс"].map({0: "Здоров (0)", 1: "ИБС (1)"})
-        fig = px.bar(count_df, x="Класс", y="Количество", color="Класс",
+        fig = px.bar(count_df, x="Класс", y="Количество", color="Класс", 
                      title="Распределение предсказанных классов", color_discrete_sequence=["#2ecc71", "#e74c3c"])
         st.plotly_chart(fig, use_container_width=True)
-
+        
         st.dataframe(results, use_container_width=True)
+        st.download_button("⬇️ Скачать результаты (CSV)", data=results.to_csv(index=False).encode('utf-8'), file_name="predictions.csv", mime="text/csv")
 
-        # Кнопка скачать CSV с результатами
-        st.download_button("⬇️ Скачать результаты (CSV)",
-                           data=results.to_csv(index=False).encode('utf-8'),
-                           file_name="predictions.csv", mime="text/csv")
-
-    # Важность признаков
     render_feature_importance(model)
-
 
 @st.cache_data(show_spinner=False)
 def get_feature_importance(_model):
     fi = _model.get_feature_importance()
     return pd.DataFrame({"Признак": FEATURES, "Важность": fi}).sort_values("Важность", ascending=False)
-
 
 def render_feature_importance(model):
     st.subheader("Вклад признаков модели")
@@ -354,7 +352,6 @@ def render_feature_importance(model):
         st.plotly_chart(fig, use_container_width=True)
     except Exception as exc:
         st.info(f"Важность признаков недоступна: {exc}")
-
 
 # ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
 def main():
@@ -373,29 +370,28 @@ def main():
     # --- БОКОВАЯ ПАНЕЛЬ ---
     with st.sidebar:
         st.header("Управление")
-        st.button("🧹 Очистить форму (сброс цифр)", on_click=reset_form, use_container_width=True,
-                  help="Сбрасывает все поля ввода в значения по умолчанию.")
-        st.button("🧪 Тестовый пример", on_click=load_test_example, use_container_width=True,
-                  help="Заполняет форму примером пациента с известными показателями.")
-
+        st.button("🧹 Очистить форму (сброс цифр)", on_click=reset_form, use_container_width=True)
+        st.button("🧪 Тестовый пример", on_click=load_test_example, use_container_width=True)
+        
         st.divider()
-
+        
         st.subheader("📜 История запросов")
         if not st.session_state.history:
             st.caption("История пока пуста.")
         else:
+            # Делаем элементы истории кликабельными (в виде кнопок)
             for i, item in enumerate(reversed(st.session_state.history)):
                 real_idx = len(st.session_state.history) - 1 - i
-                st.markdown(f"**[{item['time']}] {item['name']}**")
-                st.caption(f"Результат: {item['verdict']}")
-                if item['inputs']:  # Если данные были введены вручную
-                    if st.button(f"🔄 Воспроизвести", key=f"restore_{real_idx}", use_container_width=True):
-                        restore_from_history(real_idx)
-                        st.rerun()
+                
+                # Кнопка выглядит как запись в истории
+                btn_label = f"📄 [{item['time']}] {item['name']} | {item['verdict']}"
+                if st.button(btn_label, key=f"hist_btn_{real_idx}", use_container_width=True):
+                    restore_from_history(item)
                 st.divider()
-
-            if st.button("🗑️ Очистить историю", use_container_width=True, help="Удаляет все сохраненные результаты."):
+                
+            if st.button("🗑️ Очистить историю", use_container_width=True):
                 st.session_state.history = []
+                st.session_state.restored_csv = None
                 st.rerun()
 
         with st.expander("📖 Справка по показателям"):
@@ -422,10 +418,9 @@ def main():
             st.error("Сначала введите данные или загрузите CSV.")
         else:
             try:
-                predict_and_render(model, df_input, input_names, target_data, check_model)
+                predict_and_render(model, df_input, input_names, target_data, check_model, mode)
             except Exception as exc:
                 st.error(f"Непредвиденная ошибка: {exc}")
-
 
 if __name__ == "__main__":
     main()
